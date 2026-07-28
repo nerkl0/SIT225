@@ -21,11 +21,11 @@ void setup() {
   // Attempt to initialise the light sensor. Program will not begin if there is an error connecting
   // Serial prints with # will be ignored in the python script
   while(!lightSensor.begin()) {
-    Serial.println("# ERROR: BH1750 not found. Check sensor connections");
+    Serial.println("[ ERROR ] BH1750 not found. Check sensor connections");
     delay(1000);
   }
 
-  Serial.println("# BH1750 connected");
+  Serial.println("[ STATE ] BH1750 connected");
 }
 
 void loop() {
@@ -36,14 +36,8 @@ void loop() {
   if (now - lastSampleTime >= SAMPLE_INTERVAL_MS) {
     lastSampleTime = now; // Reset the sample timer
 
+    // Read and print value to serial for python script. Python script handles data
     float lux = lightSensor.readLightLevel();
-
-    // If a reading is outside the bounds of the sensor or a large light spike
-    // which will be marked as bad readings. Otherwise log the lux to serial 
-    if (lux < 0 || lux > 1500) {
-      Serial.println("# READ_ERROR");
-    } else {
-      Serial.println(lux);
-    }
+    Serial.println(lux);
   }
 }
