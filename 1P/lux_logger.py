@@ -25,16 +25,13 @@ def main():
     csv_path = os.path.join(LOG_DIR, f"{stamp}_lux_log.csv")
     quar_path = os.path.join(LOG_DIR, f"{stamp}_error_log.csv")
 
-    # Configure the serial port, pause briefly for the microcontroller to connect
-    # then reset the buffer to remove any garbage values
+    # Configure the serial port
     ser = serial.Serial(PORT, BAUD, timeout=2)
-    time.sleep(2)
-    ser.reset_input_buffer()
 
-    start = time.time() # log current start time
-    logged = quarantined = 0 # initialise counts for each reading
+    # initialise start as current time and count trackers
+    start = time.time()
+    logged = quarantined = 0
 
-    alert() 
     # open each csv file in write mode. With title values of timestamp, lux, 
     with open(csv_path, "w", newline="") as log_file, \
             open(quar_path, "w", newline="") as quar_file:
@@ -45,18 +42,19 @@ def main():
 
         try:
             while time.time() - start < DURATION:
-                reading = ser.readline().decode(errors="ignore").strip()
+                # reads serial converting bytes to a string
+                serial_data = ser.readline().decode(errors="ignore").strip()
                 now = datetime.now().isoformat(timespec="seconds")
 
                 # Skip blank lines and Arduino comment lines ("[ STATE ]")
-                if not reading or reading.startswith("[ "):
+                if not serial_data or serial_data.startswith("[ "):
                     continue
 
                 try:
-                    lux = float(reading)
+                    lux = float(serial_data)
                 except ValueError: 
                     # Quarantine any non-numeric lines, into quar_log. Skip to next reading
-                    quar_writer.writerow([now, reading, "not_numeric"])
+                    quar_writer.writerow([now, serial_data, "not_numeric"])
                     quar_file.flush()
                     quarantined += 1
                     continue
@@ -73,21 +71,10 @@ def main():
         except KeyboardInterrupt:
             print("\n Detected keyboard press. Stopping recording.")
 
-        finally:
-            ser.close()
-            alert() 
-            print(f"\nSaved {logged} readings to {csv_path}. "
-                    f"{quarantined} unreadable lines written to {quar_path}.")
-
-
-def alert():
-    for _ in range(3):
-        if shutil.which("paplay"):
-            subprocess.run(["paplay", "/usr/share/sounds/freedesktop/stereo/suspend-error.oga"],
-                           stderr=subprocess.DEVNULL)
-        else:
-            print("\a", end="", flush=True)
-        time.sleep(0.4)
+        ser.close()
+        alert() 
+        print(f"\nSaved {logged} readings to {csv_path}. "
+                f"{quarantined} unreadable lines written to {quar_path}.")
 
 if __name__ == "__main__":
     main()
