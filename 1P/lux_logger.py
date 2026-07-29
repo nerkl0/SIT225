@@ -1,73 +1,93 @@
 import csv
+import os
 import time
 from datetime import datetime
+
+import shutil
+import subprocess
+import time
 
 import serial
 
 PORT = "/dev/ttyACM0"
 BAUD = 9600
-DURATION_S = 30 * 60  # 2 hours
-CSV_PATH = "lux_readings_log.csv"
-QUAR_PATH = "lux_quar_log.csv"
-SENSOR_MIN, SENSOR_MAX = 1, 1500  # BH1750 valid range in lux
+DURATION = 190 * 60 # configures duration of each recording session. X * 60 will convert X minutes into seconds
+LOG_DIR = "./logs"
+LOG_COLUMN_NAMES =["timestamp", "lux"]
+QUAR_COLUMN_NAMES = ["timestamp", "received", "reason"]
+
 
 def main():
-    # Open the serial port. timeout=2 stops readline() blocking forever if the board stops sending.
-    ser_monitor = serial.Serial(PORT, BAUD, timeout=2)
-    time.sleep(2)  # small pause for the microcontroller to startup
-    ser_monitor.reset_input_buffer()  # discard anything currently sitting in the buffer
+    # create a new log for each session. Stored in logs/ folder within root directory. 
+    # titled: {time stamp}_x_log.csv.
+    os.makedirs(LOG_DIR, exist_ok=True)
+    stamp = datetime.now().strftime("%y%m%d_%H%M")
+    csv_path = os.path.join(LOG_DIR, f"{stamp}_lux_log.csv")
+    quar_path = os.path.join(LOG_DIR, f"{stamp}_error_log.csv")
 
-    start = time.time()
-    data_logged, data_flagged, data_quarantined = 0, 0, 0
+    # Configure the serial port, pause briefly for the microcontroller to connect
+    # then reset the buffer to remove any garbage values
+    ser = serial.Serial(PORT, BAUD, timeout=2)
+    time.sleep(2)
+    ser.reset_input_buffer()
 
-    # Two log files created: one for accepted data, one for quarantined data (ie. error/not lux readings)
-    with open(CSV_PATH, "w", newline="") as log_file, \
-            open(QUAR_PATH, "w", newline="") as quar_file:
+    start = time.time() # log current start time
+    logged = quarantined = 0 # initialise counts for each reading
+
+    alert() 
+    # open each csv file in write mode. With title values of timestamp, lux, 
+    with open(csv_path, "w", newline="") as log_file, \
+            open(quar_path, "w", newline="") as quar_file:
         log_writer = csv.writer(log_file)
-        log_writer.writerow(["timestamp", "lux", "in_range"])
-
+        log_writer.writerow(LOG_COLUMN_NAMES)
         quar_writer = csv.writer(quar_file)
-        quar_writer.writerow(["timestamp", "raw_line", "reason"])
+        quar_writer.writerow(QUAR_COLUMN_NAMES)
 
         try:
-            while time.time() - start < DURATION_S:
-                reading = ser_monitor.readline().decode(errors="ignore").strip()
-                stamp = datetime.now().isoformat(timespec="milliseconds")
+            while time.time() - start < DURATION:
+                reading = ser.readline().decode(errors="ignore").strip()
+                now = datetime.now().isoformat(timespec="seconds")
 
-                # Skips any blank lines and Arduino comment lines ("[ STATE ]")
+                # Skip blank lines and Arduino comment lines ("[ STATE ]")
                 if not reading or reading.startswith("[ "):
                     continue
 
-                # If the line is not parsable as a number, it is serial noise. Quarantine value
                 try:
                     lux = float(reading)
-                except ValueError:
-                    quar_writer.writerow([stamp, reading, "not_numeric"])
+                except ValueError: 
+                    # Quarantine any non-numeric lines, into quar_log. Skip to next reading
+                    quar_writer.writerow([now, reading, "not_numeric"])
                     quar_file.flush()
-                    data_quarantined += 1
+                    quarantined += 1
                     continue
-
-                # Range is flagged as it's outside an outlier. Stays in data log for inspection 
-                in_range = SENSOR_MIN <= lux <= SENSOR_MAX
-                if not in_range:
-                    data_flagged += 1
-
-                log_writer.writerow([stamp, lux, int(in_range)])
+                
+                # write log to lux_log
+                log_writer.writerow([now, lux])
                 log_file.flush()
-                data_logged += 1
+                logged += 1
 
+                # print reading as output in terminal alongside the time elapsed
                 elapsed = (time.time() - start) / 60
-                print(f"[{elapsed:5.1f} min] {data_logged:4d} readings  {lux:8.2f} lx",
-                      end="\r")
+                print(f"[{elapsed:5.1f} min] {logged:4d} readings {lux:8.2f} lx", end="\r")
 
         except KeyboardInterrupt:
-            print("\nStopped early by user.")
+            print("\n Detected keyboard press. Stopping recording.")
 
-    ser_monitor.close()
-    print(f"\nSaved {data_logged} readings to {CSV_PATH} "
-          f"({data_flagged} out of range). "
-          f"{data_quarantined} unreadable lines written to {QUAR_PATH}.")
+        finally:
+            ser.close()
+            alert() 
+            print(f"\nSaved {logged} readings to {csv_path}. "
+                    f"{quarantined} unreadable lines written to {quar_path}.")
 
+
+def alert():
+    for _ in range(3):
+        if shutil.which("paplay"):
+            subprocess.run(["paplay", "/usr/share/sounds/freedesktop/stereo/suspend-error.oga"],
+                           stderr=subprocess.DEVNULL)
+        else:
+            print("\a", end="", flush=True)
+        time.sleep(0.4)
 
 if __name__ == "__main__":
     main()
