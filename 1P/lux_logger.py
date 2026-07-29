@@ -3,10 +3,6 @@ import os
 import time
 from datetime import datetime
 
-import shutil
-import subprocess
-import time
-
 import serial
 
 PORT = "/dev/ttyACM0"
